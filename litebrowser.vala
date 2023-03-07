@@ -4,382 +4,404 @@ using Json;
 
 namespace Litebrowser {
 
-	public class LoggerRecord {
-		public LoggerRecord parent; 
-		public string class_name;
-		public string method_name;
-		public LoggerRecord(string class_name, string method_name, LoggerRecord? parent) {
-			this.class_name = class_name;
-			this.method_name = method_name;
-			this.parent = parent;
-		}
-		
-		public bool has_parent() { return this.parent != null; }
-	}
+	public class LiteBrowserTab : Gtk.Box {
 
-    public class Logger {
-        
-        private const string MESSAGE_FORMAT = "<%s> [%s] %s.%s(): %s";
-        private bool enabled;
-        private LoggerRecord current_log;
-        
-    	public Logger(bool enabled = false) {
-    		this.enabled = enabled;
-    		this.current_log = new LoggerRecord("root","main",null);
-    	}
-    	
-    	public void entering(string class_name, string method_name) {
-    		LoggerRecord source = new LoggerRecord(class_name, method_name, this.current_log);
-			this.current_log = source;
-    		this.trace("Entering %s.%s".printf(class_name, method_name));
-    	}
-    	public void exiting(string class_name, string method_name) {
-    		this.trace("Exiting %s.%s".printf(class_name, method_name));
-    		if (this.current_log.has_parent()) {
-    			this.current_log = this.current_log.parent;
-			} else {
-	    		this.current_log = new LoggerRecord("root","main",null);
-    		}
-    	}
-    	public void info(string message) {
-	    	this.logp(this.current_log.class_name, this.current_log.method_name, "info", message);
-    	}
-    	public void warn(string message) {
-	    	this.logp(this.current_log.class_name, this.current_log.method_name, "warning", message);
-    	}
-    	public void severe(string message) {
-    		this.logp(this.current_log.class_name, this.current_log.method_name, "severe", message);
-    	}
-    	public void debug(string message) {
-	    	this.logp(this.current_log.class_name, this.current_log.method_name, "debug", message);
-    	}
-    	public void trace(string message) {
-    		this.logp(this.current_log.class_name, this.current_log.method_name, "trace", message);
-    	}
-    	
-    	public void logp(string class_name, string method_name, string level, string message) {
-    		if (this.enabled) {
-	    		string date_now = new DateTime.now_local().to_string();
-    			string message_to_print = MESSAGE_FORMAT.printf(date_now, level.up(), class_name, method_name, message);
-    			print("%s\n".printf(message_to_print));
-			}
-    	}
-    }
+		private const string DEFAULT_PROTOCOLL = "https";
 
-    public class WindowBrowser : Window {
-
-        private List<TabBrowser> tabs;
+		private Regex protocoll_regex;
 		private Litebrowser.Logger logger;
 		private Litebrowser.Configs configs;
 
-        public WindowBrowser (Litebrowser.Configs configs, Litebrowser.Logger logger) {
-        	this.logger = logger;
-        	this.logger.entering("WindowBrowser","__new__");
-        	this.configs = configs;
-        	string[] resolution = this.configs.resolution.up().split("X");
-        	int x = int.parse(resolution[0]);
-        	int y = int.parse(resolution[1]);
-            set_default_size (x, y);
-            this.tabs = new List<TabBrowser>();
-            TabBrowser tab = new Litebrowser.TabBrowser(this);
-            this.tabs.append(tab);
-            this.destroy.connect (this.exit);
-        	this.logger.exiting("WindowBrowser","__new__");
+		private bool incognito;
+
+		private WebKit.WebView web_view;
+		private Gtk.ToolButton button_back;
+		private Gtk.ToolButton button_forward;
+		private Gtk.ToolButton button_reload;
+		private Gtk.ToolButton button_home;
+		private Gtk.ToolButton button_settings;
+		private Gtk.ToolButton button_bookmarks;
+		private Gtk.Entry  url_bar;
+
+		public LiteBrowserTab(Litebrowser.Configs configs, Regex procotoll_regex, bool incognito) {
+			this.logger = new Litebrowser.Logger();
+			this.logger.entering("LiteBrowserTab","__new__");
+			this.configs = configs;
+			this.incognito = incognito;
+			this.protocoll_regex = procotoll_regex;
+		   	// create toolbar
+			Gtk.Toolbar topbar = this.create_topbar();
+			// create web_view
+			this.create_webview();
+			// create box
+			this.set_orientation(Gtk.Orientation.VERTICAL);
+			this.set_spacing(0);
+			//Gtk.ScrolledWindow scrolled_window = new ScrolledWindow (null, null);
+			//scrolled_window.set_policy (PolicyType.AUTOMATIC, PolicyType.AUTOMATIC);
+			//this.logger.debug("add child to scrolled window ... ");
+			//scrolled_window.child = this.web_view;
+			// create box
+			this.pack_start (topbar, false, true, 0);
+			//this.pack_start (scrolled_window, true, true, 0);
+			this.pack_start (this.web_view, true, true, 0);
+			this.show_all();
+			this.url_bar.grab_focus();
+			this.logger.exiting("LiteBrowserWindow","__new__");
         }
         
-        public string get_home() { return this.configs.home; }
-        public string get_app_title() { return this.configs.title; }
-        public Litebrowser.Logger get_logger() { return this.logger; }
-        
-        private void exit() {
-        	this.configs.save();
-	        Gtk.main_quit();
-        }
-    }
-
-    public class TabBrowser {
-
-        private const string DEFAULT_PROTOCOLL = "https";
-
-		private Litebrowser.Logger logger;
-        private Regex protocoll_regex;
-        private Entry url_bar;
-        private WebView web_view;
-        private Label status_bar;
-        private ToolButton back_button;
-        private ToolButton forward_button;
-        private ToolButton reload_button;
-        private WindowBrowser parent;
-
-        public TabBrowser (WindowBrowser win, string url="about:home") {
-            this.parent = win;
-            this.logger = this.parent.get_logger();
-        	this.logger.entering("TabBrowser","__new__");
-        	this.parent.title = this.parent.get_app_title();
-            try {
-                 this.protocoll_regex = new Regex (".*://.*");
-            } catch (RegexError e) {
-                critical ("Regex error: %s\n", e.message);
-            }
-            create_widgets ();
-            connect_signals ();
-            this.url_bar.grab_focus ();
-            this.url_bar.text = url;
-            this.go_to(url);
-			this.logger.debug("Connect destroy window to quit");
-			this.logger.exiting("TabBrowser","__new__");
-        }
-
-        private void create_widgets () {
-	        this.logger.entering("TabBrowser","create_widgets");
+		private Gtk.Toolbar create_topbar () {
+	        this.logger.entering("LiteBrowserTab","create_topbar");
             this.logger.debug("Create buttons ...");
             Gtk.Image img = new Gtk.Image.from_icon_name ("go-previous", Gtk.IconSize.SMALL_TOOLBAR);
-                      this.back_button = new Gtk.ToolButton (img, null);
+			this.button_back = new Gtk.ToolButton (img, null);
             img = new Gtk.Image.from_icon_name ("go-next", Gtk.IconSize.SMALL_TOOLBAR);
-                      this.forward_button = new Gtk.ToolButton (img, null);
+			this.button_forward = new Gtk.ToolButton (img, null);
             img = new Gtk.Image.from_icon_name ("view-refresh", Gtk.IconSize.SMALL_TOOLBAR);
-                      this.reload_button = new Gtk.ToolButton (img, null);
+			this.button_reload = new Gtk.ToolButton (img, null);
+            img = new Gtk.Image.from_icon_name ("gtk-home", Gtk.IconSize.SMALL_TOOLBAR);
+			this.button_home = new Gtk.ToolButton(img, null);
+	        img = new Gtk.Image.from_icon_name ("gtk-about", Gtk.IconSize.SMALL_TOOLBAR);
+			this.button_bookmarks = new Gtk.ToolButton(img, null);
+	        img = new Gtk.Image.from_icon_name ("gtk-preferences", Gtk.IconSize.SMALL_TOOLBAR);
+			this.button_settings = new Gtk.ToolButton(img, null);
 	        this.logger.debug("Create url_bar ...");
             this.url_bar = new Entry ();
             Gtk.ToolItem url_bar_tool = new Gtk.ToolItem();
             url_bar_tool.add(this.url_bar);
             url_bar_tool.set_expand(true);
+			this.logger.debug("Connect signals ...");
+            this.url_bar.activate.connect (this.on_goto);
+			this.button_back.clicked.connect (this.go_back);
+            this.button_forward.clicked.connect (this.go_forward);
+            this.button_reload.clicked.connect (this.reload);
+            this.button_bookmarks.clicked.connect (() => { go_to("about:bookmarks"); });
+            this.button_home.clicked.connect(() => { go_to("about:home"); });
+			this.button_settings.clicked.connect(() => { go_to("about:configs"); });
 			this.logger.debug("Create tooolbar ...");
-            var toolbar = new Toolbar ();
-            toolbar.add (this.back_button);
-            toolbar.add (this.forward_button);
+            Gtk.Toolbar toolbar = new Gtk.Toolbar ();
+            toolbar.add (this.button_back);
+            toolbar.add (this.button_forward);
+            toolbar.add (this.button_reload);
             toolbar.add(url_bar_tool);
-            toolbar.add (this.reload_button);
-            this.logger.debug("Create web_view ...");
-            this.web_view = new WebView ();
-            var scrolled_window = new ScrolledWindow (null, null);
-            scrolled_window.set_policy (PolicyType.AUTOMATIC, PolicyType.AUTOMATIC);
-            scrolled_window.add (this.web_view);
-            this.logger.debug("Create status_bar ...");
-            this.status_bar = new Label ("New tab") ;
-            this.status_bar.xalign = 0;
-            this.logger.debug("Create box tab ...");
-            Box tab = new Box (Gtk.Orientation.VERTICAL, 0);
-            tab.pack_start (toolbar, false, true, 0);
-            tab.pack_start (scrolled_window, true, true, 0);
-            tab.pack_start (this.status_bar, false, true, 0);
-            this.logger.debug("Add tab to window ...");
-            this.parent.add(tab);
-			this.logger.exiting("TabBrowser", "create_widgets");
+			toolbar.add(this.button_home);
+			toolbar.add(this.button_bookmarks);
+			toolbar.add(this.button_settings);
+            this.logger.exiting("LiteBrowserTab","create_topbar");
+			return toolbar;
         }
 
-        private void connect_signals () {
-			this.logger.entering("TabBrowser", "connect_signals");
-			this.logger.debug("Connect url_bar event to load url ...");
-            this.url_bar.activate.connect (on_activate);
-			this.logger.debug("Connect web_view event load_changed ...");
-            this.web_view.load_changed.connect ((source, evt) => {
-	            this.url_bar.text = source.get_uri ();
-                this.parent.title = this.web_view.title;
-                if (evt == LoadEvent.FINISHED) {
-	                this.status_bar.set_label("Loaded %s".printf(this.url_bar.text));
-	            }
-                update_buttons ();
-            });
-			this.logger.debug("Connect web_view button events ...");
-            this.back_button.clicked.connect (this.web_view.go_back);
-            this.forward_button.clicked.connect (this.web_view.go_forward);
-            this.reload_button.clicked.connect (this.web_view.reload);
-			this.logger.exiting("TabBrowser", "connect_signals");
+		private void create_webview() {
+			this.logger.entering("LiteBrowerTab","create_webview");
+			this.web_view = new WebKit.WebView();
+			WebKit.Settings settings = this.web_view.get_settings();
+			settings.enable_back_forward_navigation_gestures = true;
+			settings.enable_javascript = this.configs.javascript;
+			settings.enable_page_cache = this.configs.cache;
+			if (!this.incognito) {
+				string c_file = this.configs.cookies_file.replace("~",Environment.get_home_dir ()).replace("${HOME}",Environment.get_home_dir ());
+				this.logger.debug("Cookies file: " + c_file);
+				this.web_view.get_website_data_manager().get_cookie_manager().set_persistent_storage(c_file, CookiePersistentStorage.TEXT);
+				switch (this.configs.cookies_policy.up()) {
+					case "ALWAYS":
+						this.web_view.get_website_data_manager().get_cookie_manager().set_accept_policy(CookieAcceptPolicy.ALWAYS);
+						break;
+					case "MINIMAL":
+						this.web_view.get_website_data_manager().get_cookie_manager().set_accept_policy(CookieAcceptPolicy.NO_THIRD_PARTY);
+						break;
+					case "NEVER":
+					default:
+						this.web_view.get_website_data_manager().get_cookie_manager().set_accept_policy(CookieAcceptPolicy.NEVER);
+						break;
+				}
+			}
+			// menu
+			this.web_view.context_menu.connect((menu, event, hit) => {
+				if (!hit.context_is_editable() && hit.context_is_link()) {
+					menu.remove_all();
+					if (!hit.link_uri.has_prefix("javascript:")) {
+						SimpleAction action = new SimpleAction("new-tab",null);
+						action.activate.connect(() => {
+							LiteBrowserWindow app = this.get_window_parent();
+							app.open_in_tab(hit.link_uri);
+						});
+						ContextMenuItem item = new WebKit.ContextMenuItem.from_gaction(action,"Open in new tab",null);
+						menu.append(item);
+						if (!this.incognito) {
+							action = new SimpleAction("new-window",null);
+							action.activate.connect(() => {
+								LiteBrowserWindow app = this.get_window_parent();
+								app.open_in_window(hit.link_uri, false);
+							});
+							item = new WebKit.ContextMenuItem.from_gaction(action,"Open in new window",null);
+							menu.append(item);
+						}
+						action = new SimpleAction("new-incognito",null);
+						action.activate.connect(() => {
+							LiteBrowserWindow app = this.get_window_parent();
+							app.open_in_window(hit.link_uri,true);
+						});
+						item = new WebKit.ContextMenuItem.from_gaction(action,"Open in new incognito window",null);
+						menu.append(item);
+						item = new WebKit.ContextMenuItem.from_stock_action(WebKit.ContextMenuAction.COPY_LINK_TO_CLIPBOARD);
+						menu.append(item);
+					}
+				}
+				return false;
+			});
+			/*
+			this.web_view.decide_policy.connect((decision, type) => {
+				switch(type) {
+					case PolicyDecisionType.RESPONSE:
+						this.logger.debug("Response");
+						return true;
+					case PolicyDecisionType.NEW_WINDOW_ACTION:
+						this.logger.debug("Open in a new window");
+						return true;
+					case PolicyDecisionType.NAVIGATION_ACTION:
+						this.logger.debug("Navigation");
+						return true;
+					default:
+						this.logger.debug("default");
+						return true;
+				}
+			});
+			*/
+			this.web_view.load_changed.connect ((source,evt) => {
+				this.update_bar();
+				if (evt == LoadEvent.COMMITTED) {
+					string mime = source.get_main_resource().get_response().get_mime_type();
+					string mime_a = mime.split("/")[0] + "/*";
+					string mime_b = "*/" + mime.split("/")[1];
+					this.logger.debug("mime source: " + mime);
+					if (!this.configs.mimes.contains(";%s;".printf(mime)) &&
+						!this.configs.mimes.contains(";%s;".printf(mime_a)) &&
+						!this.configs.mimes.contains(";%s;".printf(mime_b))) {
+							this.logger.info("Download: "+source.get_main_resource().get_response().get_uri() );
+							string local_file_name = this.configs.download_path.replace("~",Environment.get_home_dir ()).replace("${HOME}",Environment.get_home_dir ());
+							string[] url_arr = source.get_main_resource().get_response().get_uri().split("/");
+							string t_file_name = url_arr[url_arr.length-1];
+							local_file_name +="/" + t_file_name;
+							local_file_name = "file://" + local_file_name.replace("//","/");
+							this.logger.debug("Local file: " + local_file_name);
+							this.web_view.download_uri(source.get_main_resource().get_response().get_uri()).set_destination(local_file_name);
+					}
+				}
+				if (evt == WebKit.LoadEvent.FINISHED) {
+					GLib.Timeout.add(500, () => {
+						Gtk.Notebook parent = (Gtk.Notebook) this.get_parent();
+						Gtk.Box box = (Gtk.Box) parent.get_tab_label(this);
+						Gtk.Label label = (Gtk.Label) box.get_children().first().data;
+						string title = this.web_view.get_title();
+						if (title != null && title.length > 0) {
+							label.set_tooltip_text(title);
+							if (title.length > 20) {
+								title = title.substring(0,20) + "...";
+							}
+							label.set_label(title);
+						}
+						return false;
+					});
+				}
+			});
+			this.logger.exiting("LiteBrowerTab","create_webview");
+		}
+
+		private LiteBrowserWindow get_window_parent() {
+			Gtk.Notebook parent = (Gtk.Notebook) this.get_parent();
+			Gtk.Box box = (Gtk.Box) parent.get_parent();
+			return (LiteBrowserWindow) parent.get_parent();
+		}
+
+		private void go_back() { this.web_view.go_back(); }
+		
+		private void go_forward() { this.web_view.go_forward(); }
+		
+		private void reload() { this.web_view.reload(); }
+		
+		private void update_bar () {
+			this.logger.entering("LiteBrowserTab", "update_buttons");
+			this.button_back.sensitive = this.web_view.can_go_back ();
+            this.button_forward.sensitive = this.web_view.can_go_forward ();
+            this.url_bar.set_text(this.web_view.get_uri());
+			this.logger.exiting("LiteBrowserTab", "update_buttons");
         }
 
-        private void update_buttons () {
-			this.logger.entering("TabBrowser", "update_buttons");
-            this.back_button.sensitive = this.web_view.can_go_back ();
-            this.forward_button.sensitive = this.web_view.can_go_forward ();
-			this.logger.exiting("TabBrowser", "update_buttons");
-        }
-
-        private void on_activate () {
-			this.logger.entering("TabBrowser", "on_activate");
-            var url = this.url_bar.text;
-			this.logger.debug("Read url: %s".printf(url));
+		private void on_goto () {
+			this.logger.entering("LiteBrowserTab", "on_goto");
+            string url = this.url_bar.text;
+			this.logger.debug("Read url: " + url);
             this.go_to(url);
-			this.logger.exiting("TabBrowser", "on_activate");
+			this.logger.exiting("LiteBrowserTab", "on_activate");
         }
 
-        private void go_to(string url) {
-			this.logger.entering("TabBrowser", "go_to");
-        	var turl = url;
+        public void go_to(string url) {
+			this.logger.entering("LiteBrowserTab", "go_to");
         	switch (url) {
+				case "about:blank":
+					this.web_view.load_plain_text("");
+					break;
+				case "about:history":
+				case "about:configs":
+				case "about:settings":
+				case "about:bookmarks":
+        		case "about:new":
+				case "about:tab":
         		case "about:home":
-        			turl = this.parent.get_home();
+        			this.web_view.load_uri(this.configs.home);
+					this.logger.info("Load " + this.configs.home);
         			break;
         		default:
-		            if (!this.protocoll_regex.match (url)) {
-        		        turl = "%s://%s".printf (DEFAULT_PROTOCOLL, url);
-        		    }
-        		    break;
+		            if (url.contains("://")) {
+						string protocoll = url.split("://")[0];
+						if (protocoll == "http" || protocoll == "https")
+							this.web_view.load_uri(url);
+						else
+							this.web_view.load_plain_text("Unsupported protocoll: " + protocoll);
+					} else
+						this.web_view.load_uri("https://" + url);
+					break;
 		    }
-			this.logger.info("Load %s".printf(turl));
-			this.status_bar.set_label("Loading %s ...".printf(turl));
-            this.web_view.load_uri (turl);
-			this.logger.exiting("TabBrowser", "go_to");
+			this.logger.exiting("LiteBrowserTab", "go_to");
+        }
+	}
+
+    public class LiteBrowserWindow : Window {
+
+        private Litebrowser.Logger logger;
+		private Litebrowser.Configs configs;
+
+		private Regex protocoll_regex;
+        
+		private Gtk.Notebook tab_window;
+		private bool incognito;
+        
+		private LiteBrowserApplication app;
+		private string win_id;
+
+        public LiteBrowserWindow (LiteBrowserApplication app,string id, Litebrowser.Configs configs, Litebrowser.Logger logger, string? url = null, bool? incognito = false) {
+        	this.logger = logger;
+        	this.logger.entering("LiteBrowserWindow","__new__");
+			this.app = app;
+			this.win_id = id;
+        	// parse configurations
+			this.configs = configs;
+			this.incognito = incognito;
+        	this.set_title(this.configs.title + (this.incognito?" - Private":""));
+			string[] resolution = this.configs.resolution.up().split("X");
+        	int x = int.parse(resolution[0]);
+        	int y = int.parse(resolution[1]);
+            set_default_size (x, y);
+			try {
+				this.protocoll_regex = new Regex (".*://.*");
+		   	} catch (RegexError e) {
+			   critical ("Regex error: %s\n", e.message);
+		   	}
+			Litebrowser.LiteBrowserTab tab = new Litebrowser.LiteBrowserTab(this.configs, this.protocoll_regex, this.incognito);
+			Gtk.Box label = this.create_button_tab(tab);
+			this.tab_window = new Gtk.Notebook();
+			this.tab_window.set_scrollable(true);
+			this.tab_window.append_page(tab,label);
+			Gtk.Button new_tab = new Gtk.Button.from_icon_name("gtk-add", Gtk.IconSize.MENU);
+			new_tab.set_relief(ReliefStyle.NONE);
+			new_tab.clicked.connect(() => { 
+				this.open_in_tab("about:tab");
+			});
+			Gtk.Box new_tab_box = new Gtk.Box(Gtk.Orientation.HORIZONTAL,0);
+			new_tab_box.pack_start(new_tab,false,false,0);
+			new_tab_box.show_all();
+			this.tab_window.set_action_widget(new_tab_box,PackType.START);
+			this.tab_window.show_all();
+			this.add(tab_window);
+			this.show_all();
+			if (url == null) url = "about:home";
+			tab.go_to(url);
+            this.destroy.connect (this.exit);
+        	this.logger.exiting("LiteBrowserWindow","__new__");
+        }
+        
+		public void open_in_window(string uri, bool incognito) {
+			this.logger.entering("LiteBrowserWindow", "open_in_window");
+			this.app.new_window(uri, incognito);
+			this.logger.exiting("LiteBrowserWindow", "open_in_window");
+		}
+
+		public void open_in_tab(string uri) {
+			this.logger.entering("LiteBrowserWindow", "open_in_tab");
+			this.logger.debug("Open new tab with url: " + uri);
+			Litebrowser.LiteBrowserTab obj_tab = new Litebrowser.LiteBrowserTab(this.configs, this.protocoll_regex, this.incognito);
+			Gtk.Box obj_label = this.create_button_tab(obj_tab);
+			this.logger.debug("Box with web_view created, navigate to " + uri);
+			obj_tab.go_to(uri);
+			int position = this.tab_window.get_current_page() + 1;
+			this.logger.debug("Add tab to tab list");
+			this.tab_window.insert_page(obj_tab,obj_label,position);
+			this.tab_window.set_current_page(position);
+			this.logger.exiting("LiteBrowserWindow", "open_in_tab");
+		}
+
+		private Gtk.Box create_button_tab(Litebrowser.LiteBrowserTab tab) {
+			Gtk.Box box = new Gtk.Box(Gtk.Orientation.HORIZONTAL,0);
+			Gtk.Label label = new Gtk.Label(this.configs.title);
+			Gtk.Button close = new Gtk.Button.from_icon_name("gtk-cancel", Gtk.IconSize.MENU);
+			close.set_relief(ReliefStyle.NONE);
+			close.clicked.connect(() => {
+				this.remove_tab(tab);
+			});
+			box.pack_start(label,false,false,0);
+			box.pack_start(close,false,false,1);
+			box.show_all();
+			return box;
+		}
+
+		private void remove_tab(Litebrowser.LiteBrowserTab tab) {
+			int page_num = this.tab_window.page_num(tab);
+			this.tab_window.remove_page(page_num);
+			if (this.tab_window.get_n_pages() == 0)
+				this.exit();
+		}
+
+		private void exit() {
+			this.destroy();
+        	this.app.exit(this.win_id);
         }
     }
 
-	public class Configs {
-
-		private Logger logger;
-		public List<string> mimes = new List<string>();
-		public List<string> history = new List<string>();
-		public Configs(Logger logger) { 
-			this.logger = logger; 
-		}
-
-		public string config_file { get; set; default = "~/.config/litebrowser/options.json"; }	
-		public string title { get; set; default = "LiteBrowser"; } 
-		public string resolution { get; set; default = "800x600"; } 
-		public string home { get; set; default = "https://www.icapito.it"; }
-		public string search { get; set; default = "https://www.google.it/search?q=${text}"; }
-		public string cookies { get; set; default = "~/.config/litebrowser/cookies.txt"; }
-		public HashTable<string, string> bookmarks { get; set; default = new HashTable<string,string>(str_hash, str_equal); }
-		public bool save_history { get; set; default = true; }
-		
-		public void parse_config() {
-			this.logger.entering("Configs","parse_config");
-			string file_name = this.config_file.replace("~",Environment.get_home_dir())
-						.replace("${HOME}",Environment.get_home_dir());
-			File file = File.new_for_path (file_name);
-			// Check if a particular file exists:
-			if (!file.query_exists ()) { return; }
-			try {
-				Parser json_parser = new Parser();
-				json_parser.load_from_file(file_name);
-				Json.Node node_root = json_parser.get_root();
-				Json.Object root = node_root.get_object();
-				foreach (unowned string name in root.get_members ()) {
-					switch (name) {
-						case "resolution": 
-							this.resolution = root.get_string_member(name);
-							break;
-						case "home": 
-							this.home = root.get_string_member(name);
-							break;
-						case "search": 
-							this.search = root.get_string_member(name);
-							break;
-						case "cookies": 
-							this.cookies = root.get_string_member(name);
-							break;
-						case "save_history": 
-							this.save_history = root.get_boolean_member(name);
-							break;
-						case "mimes": 
-							Json.Array temp = root.get_array_member(name);
-							this.mimes.foreach((entry) => { this.mimes.remove(entry); });
-							foreach (unowned Json.Node item in temp.get_elements ()) {
-								this.mimes.append(item.get_string());
-							}
-							break;
-						case "history": 
-							Json.Array temp = root.get_array_member(name);
-							this.history.foreach((entry) => { this.mimes.remove(entry); });
-							foreach (unowned Json.Node item in temp.get_elements ()) {
-								this.history.append(item.get_string());
-							}
-							break;
-						case "bookmarks": 
-							HashTable<string,string> tmap = new HashTable<string,string>(str_hash, str_equal);
-							Json.Array temp = root.get_array_member(name);
-							foreach (unowned Json.Node array_item in temp.get_elements ()) {
-								// for each element if have a jsonObject with name and url key
-								Json.Object item = array_item.get_object();
-								tmap.insert(item.get_string_member("name"), item.get_string_member("url"));
-							}
-							this.bookmarks = tmap;
-							break;
-						default:
-							this.logger.warn("Unmanaged config key: %s".printf(name));
-							break;
-					}
-				}
-			} catch (Error e) {
-				this.logger.severe("Error parsing config file: %s".printf(e.message));
-			} finally {
-				this.logger.exiting("Configs", "parse_config");
-			}
-		}
-		
-		public string to_string() {
-			Json.Builder builder = new Json.Builder ();
-			builder.begin_object();
-			builder.set_member_name("resolution");
-			builder.add_string_value(this.resolution);
-			builder.set_member_name("home");
-			builder.add_string_value(this.home);
-			builder.set_member_name("search");
-			builder.add_string_value(this.search);
-			builder.set_member_name("cookies");
-			builder.add_string_value(this.cookies);
-			builder.set_member_name("save_history");
-			builder.add_boolean_value(this.save_history);
-			builder.set_member_name("mimes");
-			builder.begin_array();
-			this.mimes.foreach((entry) => { builder.add_string_value(entry); });
-			builder.end_array();
-			builder.set_member_name("history");
-			builder.begin_array();
-			this.history.foreach((entry) => { builder.add_string_value(entry); });
-			builder.end_array();
-			builder.set_member_name("bookmarks");
-			builder.begin_array();
-			this.bookmarks.foreach((name,url) => {
-				Json.Builder sbuilder = new Json.Builder (); 
-				sbuilder.begin_object();
-				sbuilder.set_member_name("name");
-				sbuilder.add_string_value(name);
-				sbuilder.set_member_name("url");
-				sbuilder.add_string_value(url);
-				sbuilder.end_object();
-				Json.Node obj = sbuilder.get_root ();
-				builder.add_value(obj);
-			});
-			builder.end_array();
-			builder.end_object ();
-			Json.Generator generator = new Json.Generator ();
-			Json.Node root = builder.get_root ();
-			generator.set_root (root);
-			return generator.to_data(null);
-		}
-		
-		public void save() {
-			this.logger.entering("Configs","save");
-			try {
-				var file = File.new_for_path (this.config_file.replace("~",Environment.get_home_dir ()).replace("${HOME}",Environment.get_home_dir ()));
-		        // Create a new file with this name
-    	        var file_stream = file.create (FileCreateFlags.REPLACE_DESTINATION);
-	            // Test for the existence of file
-	            if (!file.query_exists ()) {
-	                this.logger.severe("Unable to create config file %s".printf(this.config_file));
-	            } else {
-		            // Write text data to file
-		            var data_stream = new DataOutputStream (file_stream);
-		            data_stream.put_string (this.to_string());
-		        }
-	        } catch (Error e) {
-	        	this.logger.severe("Error during save config file: %s".printf(e.message));
-	        } finally {
-    			this.logger.exiting("Configs","save");
-			}
-		}
-	}
-
 	public class LiteBrowserApplication {
+
+		private Configs configs;
+		private Logger logger;
+
+		private HashTable<string,LiteBrowserWindow> windows = new HashTable<string,LiteBrowserWindow>(str_hash,str_equal); 
+
+		public LiteBrowserApplication() {
+			this.logger = new Logger(true);
+    	    this.configs = new Configs(this.logger);
+			if (!this.configs.parse_config()) {
+				this.configs.save();
+				this.configs.parse_config();
+			}
+		}
+
+		public void new_window(string? uri = "about:home", bool? incognito = false) {
+			this.logger.info("Open new " + (incognito?" private ":"") + "window and go to " + uri );
+			string id = this.windows.size().to_string();
+			LiteBrowserWindow w = new LiteBrowserWindow(this,id,this.configs, this.logger, uri, incognito);
+			this.logger.info("window loaded");
+			this.windows.insert(id, w);
+			w.show_all();
+		}
+		
+		public void exit(string id) {
+			this.windows.remove(id);
+			if (this.windows.size() == 0) {
+				Gtk.main_quit();
+			}
+		}
 
    		public static int main (string[] args) {
     	    Gtk.init (ref args);
-    	    Logger logger = new Logger(true);
-    	    Configs configs = new Configs(logger);
-			configs.parse_config();
-	        var browser = new WindowBrowser (configs,logger);
-	        browser.show_all ();
-			logger.info("window loaded");
+			LiteBrowserApplication app = new LiteBrowserApplication();
+			app.new_window();
 	        Gtk.main ();
 	        return 0;
 		}
