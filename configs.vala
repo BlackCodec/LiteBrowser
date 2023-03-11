@@ -19,7 +19,6 @@ namespace Litebrowser {
         public string cookies_file { get; set; default = "~/.config/litebrowser/cookies.txt"; }
         public string cookies_policy { get; set; default = "never"; }
         public HashTable<string, string> bookmarks { get; set; default = new HashTable<string,string>(str_hash, str_equal); }
-        public string mimes { get; set; default = ""; }
         public bool javascript { get; set; default = true; }
         public bool cache { get; set; default = true; }
         public bool save_history { get; set; default = true; }
@@ -65,14 +64,6 @@ namespace Litebrowser {
                         case "save_history": 
                             this.save_history = root.get_boolean_member(name);
                             break;
-                        case "mimes": 
-                            Json.Array temp = root.get_array_member(name);
-                            //this.mimes.foreach((entry) => { this.mimes.remove(entry); });
-                            foreach (unowned Json.Node item in temp.get_elements ()) {
-                                //this.mimes.append(item.get_string());
-                                this.mimes += ";" + item.get_string() +";";
-                            }
-                            break;
                         case "history": 
                             Json.Array temp = root.get_array_member(name);
                             this.history.foreach((entry) => { this.history.remove(entry); });
@@ -104,7 +95,7 @@ namespace Litebrowser {
             }
         }
         
-        public string to_string() {
+        public string to_string(string? filename, bool web = false) {
             Json.Builder builder = new Json.Builder ();
             builder.begin_object();
             builder.set_member_name("resolution");
@@ -126,43 +117,44 @@ namespace Litebrowser {
             builder.add_boolean_value(this.javascript);
             builder.set_member_name("save_history");
             builder.add_boolean_value(this.save_history);
-            builder.set_member_name("mimes");
-            builder.begin_array();
-            foreach (unowned string mime in this.mimes.split(";")) {
-                if (mime.length > 0)
-                    builder.add_string_value(mime);
+            if (!web) {
+                builder.set_member_name("history");
+                builder.begin_array();
+                this.history.foreach((entry) => { builder.add_string_value(entry); });
+                builder.end_array();
+                builder.set_member_name("bookmarks");
+                builder.begin_array();
+                this.bookmarks.foreach((name,url) => {
+                    Json.Builder sbuilder = new Json.Builder (); 
+                    sbuilder.begin_object();
+                    sbuilder.set_member_name("name");
+                    sbuilder.add_string_value(name);
+                    sbuilder.set_member_name("url");
+                    sbuilder.add_string_value(url);
+                    sbuilder.end_object();
+                    Json.Node obj = sbuilder.get_root ();
+                    builder.add_value(obj);
+                });
+                builder.end_array();
             }
-            builder.end_array();
-            builder.set_member_name("history");
-            builder.begin_array();
-            this.history.foreach((entry) => { builder.add_string_value(entry); });
-            builder.end_array();
-            builder.set_member_name("bookmarks");
-            builder.begin_array();
-            this.bookmarks.foreach((name,url) => {
-                Json.Builder sbuilder = new Json.Builder (); 
-                sbuilder.begin_object();
-                sbuilder.set_member_name("name");
-                sbuilder.add_string_value(name);
-                sbuilder.set_member_name("url");
-                sbuilder.add_string_value(url);
-                sbuilder.end_object();
-                Json.Node obj = sbuilder.get_root ();
-                builder.add_value(obj);
-            });
-            builder.end_array();
             builder.end_object ();
             Json.Generator generator = new Json.Generator ();
+            generator.set_pretty(true);
             Json.Node root = builder.get_root ();
             generator.set_root (root);
+            if (filename != null) {
+                generator.to_file(filename);
+            }
             return generator.to_data(null);
         }
-        
+
         public void save() {
             this.logger.entering("Configs","save");
             try {
                 string file_path=this.config_file.replace("~",Environment.get_home_dir ()).replace("${HOME}",Environment.get_home_dir ());
                 this.logger.debug("File path: " + file_path);
+                this.to_string(file_path);
+                /*
                 File file = File.parse_name(file_path);
                 this.logger.debug("Config file: " + file.get_uri());
                 // Test for the existence of file
@@ -184,6 +176,7 @@ namespace Litebrowser {
                 stream.output_stream.write(this.to_string().data);
                 if (!file.query_exists())
                     this.logger.severe("Unable to create config file %s".printf(this.config_file));
+                    */
             } catch (Error e) {
                 this.logger.severe("Error during save config file: %s".printf(e.message));
             } finally {

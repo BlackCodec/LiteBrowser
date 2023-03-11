@@ -36,13 +36,8 @@ namespace Litebrowser {
 			// create box
 			this.set_orientation(Gtk.Orientation.VERTICAL);
 			this.set_spacing(0);
-			//Gtk.ScrolledWindow scrolled_window = new ScrolledWindow (null, null);
-			//scrolled_window.set_policy (PolicyType.AUTOMATIC, PolicyType.AUTOMATIC);
-			//this.logger.debug("add child to scrolled window ... ");
-			//scrolled_window.child = this.web_view;
 			// create box
 			this.pack_start (topbar, false, true, 0);
-			//this.pack_start (scrolled_window, true, true, 0);
 			this.pack_start (this.web_view, true, true, 0);
 			this.show_all();
 			this.url_bar.grab_focus();
@@ -116,6 +111,8 @@ namespace Litebrowser {
 			}
 			// menu
 			this.web_view.context_menu.connect((menu, event, hit) => {
+				this.logger.entering("LiteBrowerTab","context_menu");
+				this.logger.debug("uri: " + hit.link_uri);
 				if (!hit.context_is_editable() && hit.context_is_link()) {
 					menu.remove_all();
 					if (!hit.link_uri.has_prefix("javascript:")) {
@@ -148,44 +145,69 @@ namespace Litebrowser {
 				}
 				return false;
 			});
-			/*
-			this.web_view.decide_policy.connect((decision, type) => {
-				switch(type) {
-					case PolicyDecisionType.RESPONSE:
-						this.logger.debug("Response");
-						return true;
-					case PolicyDecisionType.NEW_WINDOW_ACTION:
-						this.logger.debug("Open in a new window");
-						return true;
+			this.web_view.decide_policy.connect((source, decision, type) => {
+				this.logger.entering("LiteBrowerTab","decide_policy");
+				// convert to NavigationPolicyDecision
+				switch (type) {
 					case PolicyDecisionType.NAVIGATION_ACTION:
-						this.logger.debug("Navigation");
+						this.logger.debug("Policy: navigation");
+						WebKit.NavigationPolicyDecision web_decision = (WebKit.NavigationPolicyDecision) decision;
+						WebKit.NavigationAction action = web_decision.get_navigation_action();
+						// check if navigation type is link click
+						if (action.get_navigation_type() == NavigationType.LINK_CLICKED) {
+							// check the mouse middle click
+							uint mouse_button = action.get_mouse_button();
+							this.logger.debug("Mouse button: " + mouse_button.to_string());
+							// 0 = no mouse button
+							if (mouse_button == 0) return false;
+							// check the ctrl click
+							uint key_mod = action.get_modifiers();
+							this.logger.debug("Modifiers: " + key_mod.to_string());
+							if ((mouse_button == 1 && key_mod == 4) || 
+								(mouse_button == 2 && key_mod == 0)) {
+									// open in a new tab
+									LiteBrowserWindow app = this.get_window_parent();
+									app.open_in_tab(action.get_request().get_uri());
+									decision.ignore();
+									return true;
+							} 
+							if (mouse_button == 1 && key_mod == 1) {
+								LiteBrowserWindow app = this.get_window_parent();
+								app.open_in_window(action.get_request().get_uri());
+								decision.ignore();
+								return true;
+							}
+						}
+						return false;
+					case PolicyDecisionType.NEW_WINDOW_ACTION:
+						this.logger.debug("Policy: new_window");
+						WebKit.NavigationPolicyDecision web_decision = (WebKit.NavigationPolicyDecision) decision;
+						WebKit.NavigationAction action = web_decision.get_navigation_action();
+						// open in a new tab
+						LiteBrowserWindow app = this.get_window_parent();
+						app.open_in_tab(action.get_request().get_uri());
+						decision.ignore();
 						return true;
+					case PolicyDecisionType.RESPONSE:
+						this.logger.debug("Policy: response");
+						// check if is a download
+						WebKit.ResponsePolicyDecision web_decision = (WebKit.ResponsePolicyDecision) decision;
+						this.logger.debug("Mime supported=" + (web_decision.is_mime_type_supported()?"yes":"no"));
+						if (!web_decision.is_mime_type_supported()) {
+							URIResponse response = web_decision.get_response();
+							this.logger.debug("URI: " + response.get_uri());
+							this.logger.debug("mime: " + response.get_mime_type());
+							decision.download();
+							return true;
+						}
+						return false;
 					default:
-						this.logger.debug("default");
-						return true;
+						this.logger.debug("Policy: none");
+						return false;
 				}
 			});
-			*/
 			this.web_view.load_changed.connect ((source,evt) => {
 				this.update_bar();
-				if (evt == LoadEvent.COMMITTED) {
-					string mime = source.get_main_resource().get_response().get_mime_type();
-					string mime_a = mime.split("/")[0] + "/*";
-					string mime_b = "*/" + mime.split("/")[1];
-					this.logger.debug("mime source: " + mime);
-					if (!this.configs.mimes.contains(";%s;".printf(mime)) &&
-						!this.configs.mimes.contains(";%s;".printf(mime_a)) &&
-						!this.configs.mimes.contains(";%s;".printf(mime_b))) {
-							this.logger.info("Download: "+source.get_main_resource().get_response().get_uri() );
-							string local_file_name = this.configs.download_path.replace("~",Environment.get_home_dir ()).replace("${HOME}",Environment.get_home_dir ());
-							string[] url_arr = source.get_main_resource().get_response().get_uri().split("/");
-							string t_file_name = url_arr[url_arr.length-1];
-							local_file_name +="/" + t_file_name;
-							local_file_name = "file://" + local_file_name.replace("//","/");
-							this.logger.debug("Local file: " + local_file_name);
-							this.web_view.download_uri(source.get_main_resource().get_response().get_uri()).set_destination(local_file_name);
-					}
-				}
 				if (evt == WebKit.LoadEvent.FINISHED) {
 					GLib.Timeout.add(500, () => {
 						Gtk.Notebook parent = (Gtk.Notebook) this.get_parent();
@@ -198,6 +220,15 @@ namespace Litebrowser {
 								title = title.substring(0,20) + "...";
 							}
 							label.set_label(title);
+						}
+						// save history
+						string uri = this.web_view.get_uri();
+						if (uri.has_prefix("about:") || uri.has_prefix("clear:")) return true;
+						if (this.configs.save_history && 
+							this.configs.history.find_custom(uri,strcmp) == null) {
+							this.configs.history.append(uri);
+							this.logger.debug("Added to list: " + 
+								this.configs.history.find_custom(uri,strcmp).data);
 						}
 						return false;
 					});
@@ -237,15 +268,28 @@ namespace Litebrowser {
         public void go_to(string url) {
 			this.logger.entering("LiteBrowserTab", "go_to");
         	switch (url) {
-				case "about:blank":
+				case "about:new":
+				case "about:tab":
+        		case "about:blank":
 					this.web_view.load_plain_text("");
 					break;
 				case "about:history":
-				case "about:configs":
+					string hist_string="<html><head><title>History</title></head>";
+					hist_string +="<body><h3>History</h3><ul>";
+					this.configs.history.foreach((entry) => { 
+						hist_string += "<li><a href='" + entry + "'>" + entry + "</a></li>"; 
+					});
+					hist_string +="</ul></body></html>";
+					this.web_view.load_html(hist_string,url);
+					break;
+				case "about:setting":	
 				case "about:settings":
+				case "about:config":
+				case "about:configs":
+					this.web_view.load_plain_text(this.configs.to_string(null,true));
+					break;
 				case "about:bookmarks":
-        		case "about:new":
-				case "about:tab":
+					//TODO 
         		case "about:home":
         			this.web_view.load_uri(this.configs.home);
 					this.logger.info("Load " + this.configs.home);
@@ -319,8 +363,9 @@ namespace Litebrowser {
         	this.logger.exiting("LiteBrowserWindow","__new__");
         }
         
-		public void open_in_window(string uri, bool incognito) {
+		public void open_in_window(string uri, bool? incognito = null) {
 			this.logger.entering("LiteBrowserWindow", "open_in_window");
+			if (incognito == null) incognito = this.incognito;
 			this.app.new_window(uri, incognito);
 			this.logger.exiting("LiteBrowserWindow", "open_in_window");
 		}
@@ -394,6 +439,7 @@ namespace Litebrowser {
 		public void exit(string id) {
 			this.windows.remove(id);
 			if (this.windows.size() == 0) {
+				this.configs.save();
 				Gtk.main_quit();
 			}
 		}
